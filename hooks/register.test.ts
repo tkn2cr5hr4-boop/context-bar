@@ -58,6 +58,7 @@ test('the band breaks the window down by category', async ($, on) => {
   let resetsAt = ''
 
   on('session.measure', (_, e) => ({ changed: e.changed }))
+  on('tool.call', () => ({ result: 'ok' }))
   on('ui.toast', (_, e) => {
     toasts.push(e.text)
 
@@ -132,6 +133,19 @@ test('the band breaks the window down by category', async ($, on) => {
     expect(toasts).toHaveLength(before + 1)
     expect((await ui.find({ type: 'Text', text: /^90% $/ }))?.props.color).toBe('error')
     expect((await ui.find({ type: 'Box', text: /Context/ }))?.props.borderColor).toBe('error')
+
+    // Mid-turn a tool call takes a reading; a second one right behind it does not.
+    messages = 64_000
+    await time.advance(5000)
+    await $.tool.call({ tool: 'Bash', tool_use_id: `${surface}-1`, command: 'true' })
+    expect(await ui.find({ type: 'Text', text: /^42% $/ })).toBeDefined()
+    messages = 160_000
+    await $.tool.call({ tool: 'Bash', tool_use_id: `${surface}-2`, command: 'true' })
+    expect(await ui.find({ type: 'Text', text: /^42% $/ })).toBeDefined()
+    // Nor does a subagent's.
+    await time.advance(5000)
+    await $.tool.call({ tool: 'Bash', tool_use_id: `${surface}-3`, command: 'true', agentId: 'a1' })
+    expect(await ui.find({ type: 'Text', text: /^42% $/ })).toBeDefined()
 
     // No breakdown to be had: the plain bar, from the measurement itself.
     hasBreakdown = false

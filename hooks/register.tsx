@@ -27,6 +27,9 @@ const clock = atom({ plugin: 'context-bar', key: 'now' } as const, 0)
 
 const MINUTE = 60_000
 
+// The least time between two mid-turn readings, so a burst of tool calls takes one.
+const LIVE_GAP = 2000
+
 // The window whose reset is counted down beside its figure.
 const SESSION_LIMIT = 'five_hour'
 
@@ -222,6 +225,7 @@ const record = async ($: EngineInterface, now: Fill) => {
 
 export const register: Register = on => {
   let ticking: Timer | undefined
+  let liveAt = 0
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -270,6 +274,25 @@ export const register: Register = on => {
   on('session.measure', async ($, e, next) => {
     const now = await measure($, e)
     await record($, now)
+
+    return next(e)
+  })
+
+  // Mid-turn: the engine measures only when a turn ends, so each of the main
+  // thread's tool calls takes a reading too, the response that asked for it in.
+  on('tool.call', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      try {
+        const at = await $.clock.now()
+
+        if (at - liveAt >= LIVE_GAP) {
+          liveAt = at
+          await record($, await measure($))
+        }
+      } catch {
+        // A reading is never worth a tool call.
+      }
+    }
 
     return next(e)
   })
