@@ -30,6 +30,9 @@ const MINUTE = 60_000
 // The least time between two mid-turn readings, so a burst of tool calls takes one.
 const LIVE_GAP = 2000
 
+// What the terminal draws for the Compact button, `[ Compact ]`, and the space before it.
+const COMPACT_CELLS = 12
+
 // The window whose reset is counted down beside its figure.
 const SESSION_LIMIT = 'five_hour'
 
@@ -223,6 +226,25 @@ const record = async ($: EngineInterface, now: Fill) => {
   $.ui.toast(`Context is ${now.percent}% full${left}`)
 }
 
+// The Compact button's press: what `/compact` does, then a fresh reading.
+const compactNow = async ($: EngineInterface) => {
+  try {
+    const { skip } = await $.session.compact()
+
+    if (skip) {
+      $.ui.toast(`Not compacted: ${skip}`)
+
+      return
+    }
+  } catch {
+    $.ui.toast('Cannot compact while a turn is running')
+
+    return
+  }
+
+  await record($, await measure($))
+}
+
 export const register: Register = on => {
   let ticking: Timer | undefined
   let liveAt = 0
@@ -310,7 +332,7 @@ export const register: Register = on => {
       return next(e)
     }
 
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
     // The compact view is the bar row alone: no frame, no legend.
     const isSlim = shown === 'compact'
     // The frame's two borders and a cell of padding each side.
@@ -347,7 +369,12 @@ export const register: Register = on => {
     ]
     // Each figure costs its text and the separator before it.
     const cellsIn = (figures: Figure[]) => figures.reduce((sum, figure) => sum + 3 + figure.text.length, 0) - 2
-    const inner = e.props.bodyColumns - pad - 'Context '.length - lead.length
+    // Offered once the window is filling up, and between turns: a compaction rejects mid-turn.
+    const hasCompact = percent >= 60 && !e.props.isWorking
+    // It sits at the legend's end, and on the bar's row where there is no legend.
+    const isOnBar = hasCompact && (isSlim || used.length === 0)
+    const compactButton = <Button key="compact" label="Compact" onPress={() => compactNow($)} />
+    const inner = e.props.bodyColumns - pad - 'Context '.length - lead.length - (isOnBar ? COMPACT_CELLS : 0)
     // A narrow band keeps the bar and lets the figures beside it go, free space first.
     const trail =
       [[...totals, ...room, ...account], [...totals, ...account], account, totals].find(
@@ -361,9 +388,12 @@ export const register: Register = on => {
         {lead}
       </Text>,
     ]
-    const after = trail.map(({ text, color: own }, i) =>
-      own ? <Text color={own}>{`${i > 0 ? ' · ' : ' '}${text}`}</Text> : <Text dimColor>{`${i > 0 ? ' · ' : ' '}${text}`}</Text>,
-    )
+    const after = [
+      ...trail.map(({ text, color: own }, i) =>
+        own ? <Text color={own}>{`${i > 0 ? ' · ' : ' '}${text}`}</Text> : <Text dimColor>{`${i > 0 ? ' · ' : ' '}${text}`}</Text>,
+      ),
+      ...(isOnBar ? [<Text> </Text>, compactButton] : []),
+    ]
 
     if (used.length === 0) {
       const filled = Math.min(width, percent === 0 ? 0 : Math.max(1, Math.round((percent / 100) * width)))
@@ -408,26 +438,32 @@ export const register: Register = on => {
     }
 
     const hasReserve = reserve !== undefined && buffer > 0
-    const legend = fitLegend(hasReserve ? [...used, reserve] : used, e.props.bodyColumns - pad)
+    const legend = fitLegend(
+      hasReserve ? [...used, reserve] : used,
+      e.props.bodyColumns - pad - (hasCompact ? COMPACT_CELLS : 0),
+    )
 
     return (
       <Box flexDirection="column" {...frameOf(frame, percent < 60)}>
         {bar}
-        <Box columnGap={legend.gap}>
-          {used.map((_, i) => (
-            <Box>
-              <Text color={PALETTE[i % PALETTE.length]}>{'● '}</Text>
-              <Text wrap="truncate-end">{legend.names[i]}</Text>
-              <Text dimColor>{legend.counts[i]}</Text>
-            </Box>
-          ))}
-          {hasReserve ? (
-            <Box>
-              <Text dimColor wrap="truncate-end">
-                {`╍ ${legend.names[used.length]}${legend.counts[used.length]}`}
-              </Text>
-            </Box>
-          ) : null}
+        <Box justifyContent="space-between">
+          <Box columnGap={legend.gap}>
+            {used.map((_, i) => (
+              <Box>
+                <Text color={PALETTE[i % PALETTE.length]}>{'● '}</Text>
+                <Text wrap="truncate-end">{legend.names[i]}</Text>
+                <Text dimColor>{legend.counts[i]}</Text>
+              </Box>
+            ))}
+            {hasReserve ? (
+              <Box>
+                <Text dimColor wrap="truncate-end">
+                  {`╍ ${legend.names[used.length]}${legend.counts[used.length]}`}
+                </Text>
+              </Box>
+            ) : null}
+          </Box>
+          {hasCompact ? compactButton : null}
         </Box>
       </Box>
     )

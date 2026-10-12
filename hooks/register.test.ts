@@ -59,6 +59,13 @@ test('the band breaks the window down by category', async ($, on) => {
 
   on('session.measure', (_, e) => ({ changed: e.changed }))
   on('tool.call', () => ({ result: 'ok' }))
+  let compactions = 0
+  on('session.compact', () => {
+    compactions += 1
+    messages = 64_000
+
+    return { messages: [{ role: 'user' as const, text: 'summary', toolUses: [] }] }
+  })
   on('ui.toast', (_, e) => {
     toasts.push(e.text)
 
@@ -133,6 +140,17 @@ test('the band breaks the window down by category', async ($, on) => {
     expect(toasts).toHaveLength(before + 1)
     expect((await ui.find({ type: 'Text', text: /^90% $/ }))?.props.color).toBe('error')
     expect((await ui.find({ type: 'Box', text: /Context/ }))?.props.borderColor).toBe('error')
+
+    // The Compact button is offered from 60%, between turns only; a press compacts and reads again.
+    expect(await ui.find({ type: 'Button' })).toBeDefined()
+    const busy = await $.ui.mount({ ...BAND, props: { ...BAND.props, isWorking: true }, surface })
+    expect(await busy.find({ type: 'Button' })).toBeUndefined()
+    await busy.unmount()
+    const compacted = compactions
+    await ui.press({ key: 'compact' })
+    expect(compactions).toBe(compacted + 1)
+    expect(await ui.find({ type: 'Text', text: /^42% $/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button' })).toBeUndefined()
 
     // Mid-turn a tool call takes a reading; a second one right behind it does not.
     messages = 64_000
